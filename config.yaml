@@ -1,0 +1,90 @@
+# jobhunt configuration. Everything tunable lives here — no editing Python.
+#
+# Tune `filters` first. It is deterministic, free, and it is what keeps the
+# LLM bill small: roughly 2000 raw postings -> 40 candidates before a single
+# token is spent.
+
+filters:
+  # Title regexes, matched case-insensitively against the job title only.
+  # A title must match at least one include AND zero excludes.
+  #
+  # Gotcha: "sde" as a bare regex does NOT match "Software Development
+  # Engineer" — different words entirely. Use \bsde\b for the acronym and
+  # list the spelled-out variants separately, as below.
+  include_titles:
+  # --- AI / applied AI track (primary target) ---
+    - '\b(ai|ml|llm|genai|generative ai|agentic|applied ai|applied ml)\b.*\bengineer\b'
+    - '\bengineer\b.*\b(ai|llm|genai|agentic|applied ai)\b'
+    - 'forward[\s-]*deployed.*engineer'
+    - '\bfde\b'
+    - 'founding.*engineer'
+    - 'full[\s-]*stack (ai |software )?engineer'
+    - 'member of technical staff'
+
+    # --- Backend / platform / general SWE (fallback track) ---
+    - '\b(software|backend|back-end|python|platform|infrastructure|infra|distributed|cloud|api)\b.*\bengineer\b'
+    - '\bengineer\b.*\b(backend|back-end|python|platform|infrastructure|infra|distributed)\b'
+    - 'software engineer'
+    - 'software development engineer'
+    - '\bsde\b'
+    - '\bsde\s*-?\s*(i{1,3}|[123])\b'
+
+  # Anything matching these is dropped even if an include matched.
+  exclude_titles:
+    - '\b(staff|principal|distinguished|fellow|architect)\b'      # too senior for now
+    # "Senior" at 2.5 years is a consistent 3-4 from the screener — dropping it
+    # here is free, dropping it after an LLM call is not. Delete this line once
+    # you are ~4 years in, or if you want to stretch-apply anyway.
+    - '\bsenior\b'
+    - '\b(director|vp|vice president|head of|chief|cto)\b'
+    - '\b(manager|management)\b'
+    - '\b(intern|internship|apprentice|trainee)\b'                # too junior
+    - '\b(sales|account executive|marketing|recruit|support|success)\b'
+    - '\b(frontend|front-end|ios|android|mobile|game|designer)\b' # wrong discipline
+    - '\b(data scientist|machine learning scientist|research scientist)\b'
+
+  # Substrings matched against "<location> <title>", case-insensitive.
+  # Leave empty to accept every location.
+  locations:
+    - bangalore
+    - bengaluru
+    - hyderabad
+    - gurugram
+    - noida
+    - delhi
+    - new delhi
+    - pune
+    - india
+
+  # If true, anything reading as remote passes the location gate.
+  allow_remote: true
+
+  # Drop postings older than this. Set to null to disable.
+  # Boards often re-stamp `updated_at`, so this is a soft signal, not a promise.
+  max_age_days: 10
+
+# Workday careers sites (ats: workday in companies.yaml). Workday search is
+# free-text, so these terms decide which postings come back; the filters above
+# still apply on top. Tuned to profile.json (backend / AI / Python).
+workday:
+  search_terms:
+    - software engineer
+    - backend engineer
+    - python
+    - ai engineer
+    - llm
+  max_pages: 2            # 20 results per page, per search term
+
+# --- LLM stages -------------------------------------------------------------
+screen_batch_size: 8      # jobs per screening call. Higher = cheaper, sloppier.
+screen_jd_chars: 1400     # JD truncation for screening
+draft_jd_chars: 6000      # JD truncation for drafting
+score_threshold: 7.0      # below this, no draft and no digest slot
+max_per_digest: 5         # hard cap on expensive draft calls per run
+
+# --- paths ------------------------------------------------------------------
+companies_file: companies.yaml
+profile_file: profile.json
+seen_file: seen.json
+digest_file: out/digest.html
+tracker_csv: out/tracker.csv

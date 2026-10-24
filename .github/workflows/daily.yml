@@ -1,0 +1,106 @@
+name: daily job digest
+
+on:
+  schedule:
+    # 06:00 IST, weekdays. IST is UTC+5:30, so 06:00 IST == 00:30 UTC.
+    # GitHub's scheduler is best-effort and can lag by several minutes under
+    # load — that is fine for a job digest, do not tighten it.
+    - cron: "30 0 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip the email, just build the digest artifact"
+        type: boolean
+        default: false
+
+# Two runs sharing one dedupe store would race. Queue them instead.
+concurrency:
+  group: jobhunt-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read         # nothing is pushed back; the store lives in the cache
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the dedupe store
+        # seen.json is what stops you being emailed the same job twice, so it
+        # has to survive between runs. It is NOT committed: it is personal, and
+        # a seen.json in the repo would mark every job as seen for anyone who
+        # clones it. Cache entries are immutable, so the key is unique per run
+        # and restore-keys pulls the most recent one forward.
+        uses: actions/cache@v4
+        with:
+          path: seen.json
+          key: jobhunt-seen-${{ github.run_id }}
+          restore-keys: |
+            jobhunt-seen-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write profile.json
+        # profile.json is gitignored (it is derived from your resume), so CI
+        # gets it from a secret. Create it locally with
+        #   python -m jobhunt profile --resume resume.pdf
+        # then paste the file contents into the PROFILE_JSON repo secret.
+        env:
+          PROFILE_JSON: ${{ secrets.PROFILE_JSON }}
+        run: |
+          if [ -z "$PROFILE_JSON" ]; then
+            echo "::error::PROFILE_JSON secret is empty — see the README"
+            exit 1
+          fi
+          printf '%s' "$PROFILE_JSON" > profile.json
+          python -c "import json;json.load(open('profile.json'));print('profile.json parsed OK')"
+
+      - name: Run the pipeline
+        env:
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'anthropic' }}
+          SCREEN_PROVIDER: ${{ vars.SCREEN_PROVIDER }}
+          DRAFT_PROVIDER: ${{ vars.DRAFT_PROVIDER }}
+          SCREEN_MODEL: ${{ vars.SCREEN_MODEL }}
+          DRAFT_MODEL: ${{ vars.DRAFT_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m jobhunt run
+          else
+            python -m jobhunt run --send
+          fi
+
+      - name: Upload digest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Report the dedupe store
+        if: always()
+        run: |
+          if [ -f seen.json ]; then
+            python -c "import json;print(f'tracking {len(json.load(open(\"seen.json\")))} postings')"
+          else
+            echo "no seen.json — first run, or the cache expired"
+          fi

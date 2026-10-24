@@ -1,0 +1,11 @@
+# Core — needed for `run --mock --scorer keyword` (no API key required).
+requests>=2.31
+PyYAML>=6.0
+
+# Only needed if you point a stage at Anthropic (the default provider).
+# Gemini, Groq, OpenAI-compatible and Ollama all go over plain `requests`,
+# so you can delete this line and still use those.
+anthropic>=0.40
+
+# Tests
+pytest>=8.0

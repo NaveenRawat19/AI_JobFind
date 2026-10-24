@@ -1,0 +1,43 @@
+{
+  "name": "Sample Candidate",
+  "current_title": "Software Engineer II",
+  "years_experience": 3,
+  "core_skills": [
+    "Go",
+    "Java",
+    "Python",
+    "distributed systems",
+    "Kubernetes",
+    "Kafka",
+    "gRPC",
+    "PostgreSQL",
+    "Redis",
+    "Docker",
+    "Terraform",
+    "observability",
+    "TCP/IP",
+    "HTTP",
+    "DNS",
+    "system design"
+  ],
+  "domains": [
+    "backend services",
+    "distributed systems",
+    "CDN and edge networking",
+    "platform infrastructure"
+  ],
+  "notable_projects": [
+    "Rebuilt a request-routing layer in Go, cutting p99 latency from 340ms to 95ms",
+    "Owned the migration of 40 services onto Kubernetes with zero customer-facing downtime",
+    "Built a Kafka-based event pipeline handling 1.2B events/day"
+  ],
+  "education": "B.E. Computer Science, 2022",
+  "target_titles": [
+    "Software Engineer",
+    "Backend Engineer",
+    "Software Development Engineer",
+    "Site Reliability Engineer",
+    "Platform Engineer"
+  ],
+  "seniority": "mid"
+}

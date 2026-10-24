@@ -1,0 +1,76 @@
+# Boards to poll. One entry per company.
+#
+#   ats:   greenhouse | lever | ashby | workday
+#   slug:  the company's board identifier (NOT its domain)
+#          (workday uses `url:` instead of `slug:` — the careers-page URL)
+#   name:  whatever you want to see in the digest
+#
+# The slug is the last path segment of the company's public careers board:
+#   https://boards.greenhouse.io/<slug>        -> ats: greenhouse
+#   https://jobs.lever.co/<slug>               -> ats: lever
+#   https://jobs.ashbyhq.com/<slug>            -> ats: ashby
+#
+# THESE ARE EXAMPLES — verify each one before you trust the output. Companies
+# migrate between ATS vendors and slugs go dead. Check a slug in your browser:
+#   https://boards-api.greenhouse.io/v1/boards/<slug>/jobs?content=true
+#   https://api.lever.co/v0/postings/<slug>?mode=json
+#   https://api.ashbyhq.com/posting-api/job-board/<slug>?includeCompensation=true
+#
+# A dead slug is not fatal: fetch_board prints the HTTP status and returns [],
+# so one bad entry never takes down the run. Watch the per-board job counts on
+# stdout — a board reporting 0 jobs every day is a slug that needs fixing.
+#
+# Start with 10-15 companies you would actually join. A list of 200 is mostly
+# noise and makes the prefilter counts impossible to reason about.
+
+companies:
+  - {ats: greenhouse, slug: nexla, name: Nexla}
+  - {ats: greenhouse, slug: truveta, name: Truveta}
+  - {ats: greenhouse, slug: alphasenseindia, name: AlphaSense India}
+  - {ats: greenhouse, slug: starburst, name: Starburst}
+  - {ats: greenhouse, slug: sigmoid, name: Sigmoid}
+  - {ats: greenhouse, slug: redwoodsoftware, name: Redwood Software}
+  - {ats: greenhouse, slug: cognite, name: Cognite}
+  - {ats: greenhouse, slug: conga, name: Conga}
+  # Postman moved off Greenhouse (board 404s); its Workable board currently lists 0 jobs.
+  # - {ats: greenhouse, slug: postman, name: Postman}
+  - {ats: greenhouse, slug: gleanwork, name: Glean}
+  - {ats: greenhouse, slug: databricks, name: Databricks}
+  - {ats: greenhouse, slug: stripe, name: Stripe}
+  - {ats: greenhouse, slug: celonis, name: Celonis}
+  - {ats: greenhouse, slug: doctolib, name: Doctolib}
+  - {ats: greenhouse, slug: twilio, name: Twilio}
+
+  - {ats: ashby, slug: plane, name: Plane}
+  - {ats: ashby, slug: signoz, name: SigNoz}
+  - {ats: ashby, slug: sardine, name: Sardine}
+  - {ats: ashby, slug: firstwork, name: Firstwork}
+  - {ats: ashby, slug: ema, name: Ema}
+  - {ats: ashby, slug: elevenlabs, name: ElevenLabs}
+  - {ats: ashby, slug: outmarket, name: Outmarket}
+  - {ats: ashby, slug: mem0, name: Mem0}
+  - {ats: ashby, slug: level-ai, name: Level AI}
+  - {ats: ashby, slug: furtherai, name: FurtherAI}
+
+  - {ats: lever, slug: mistral, name: Mistral AI}
+  - {ats: lever, slug: cred, name: CRED}
+  - {ats: lever, slug: palantir, name: Palantir}
+  - {ats: lever, slug: ttecdigital, name: TTEC Digital}
+  - {ats: lever, slug: gohighlevel, name: HighLevel}
+
+  # Workday: paste the careers-page URL (tenant, cluster and site are parsed from it).
+  # Picked for fit with profile.json: backend / AI-LLM / infra roles, India offices.
+  - {ats: workday, url: "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", name: NVIDIA}
+  - {ats: workday, url: "https://adobe.wd5.myworkdayjobs.com/external_experienced", name: Adobe}
+  - {ats: workday, url: "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site", name: Salesforce}
+  - {ats: workday, url: "https://workday.wd5.myworkdayjobs.com/Workday", name: Workday}
+  - {ats: workday, url: "https://mastercard.wd1.myworkdayjobs.com/CorporateCareers", name: Mastercard}
+  - {ats: workday, url: "https://capitalone.wd12.myworkdayjobs.com/Capital_One", name: Capital One}
+  - {ats: workday, url: "https://paypal.wd1.myworkdayjobs.com/jobs", name: PayPal}
+  - {ats: workday, url: "https://autodesk.wd1.myworkdayjobs.com/Ext", name: Autodesk}
+  - {ats: workday, url: "https://redhat.wd5.myworkdayjobs.com/Jobs", name: Red Hat}
+  - {ats: workday, url: "https://broadcom.wd1.myworkdayjobs.com/External_Career", name: Broadcom}
+  - {ats: workday, url: "https://intel.wd1.myworkdayjobs.com/External", name: Intel}
+  - {ats: workday, url: "https://thomsonreuters.wd5.myworkdayjobs.com/External_Career_Site", name: Thomson Reuters}
+  - {ats: workday, url: "https://wf.wd1.myworkdayjobs.com/WellsFargoJobs", name: Wells Fargo}
+
