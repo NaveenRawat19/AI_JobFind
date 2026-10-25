@@ -153,8 +153,13 @@ DRAFT_MODEL=claude-sonnet-5
 | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | yes | default; uses the official SDK |
 | Google Gemini | `gemini` | `GEMINI_API_KEY` | yes | generous free tier |
 | Groq | `groq` | `GROQ_API_KEY` | no | very fast, free tier |
+| Grok (xAI) | `xai` (or `grok`) | `XAI_API_KEY` | via local text extraction | OpenAI-compatible at `api.x.ai/v1`; defaults `grok-4.3` (screen) / `grok-4.7` (draft); `XAI_BASE_URL` to override |
 | OpenAI-compatible | `openai-compatible` | `GROQ_API_KEY` + `LLM_BASE_URL` | no | Together, OpenRouter, vLLM |
 | Ollama | `ollama` | none | no | fully local, `OLLAMA_HOST` |
+
+Providers that cannot read a PDF directly (Groq, Grok, Ollama) get the resume's
+text extracted locally with `pypdf` instead. A scanned, image-only PDF has no text
+to extract; upload a `.txt`/`.md` version or use Gemini/Anthropic for that.
 
 Everything except Anthropic goes over plain `requests`, so you can delete the
 `anthropic` line from `requirements.txt` and still run the whole thing.
@@ -206,14 +211,128 @@ normal password stops working once 2FA is on.
 
 ---
 
+## HTTP API
+
+The same pipeline is available as a service, so an app can upload a resume and
+trigger a search instead of running the CLI.
+
+```bash
+pip install -r requirements.txt
+JWT_SECRET=$(python -c "import secrets; print(secrets.token_urlsafe(48))") \
+  uvicorn jobhunt.api.app:app --env-file .env
+# interactive docs: http://127.0.0.1:8000/docs  (Authorize: username = email)
+```
+
+### Auth
+
+Multi-user: anyone can register, and each user has their own profile, runs and
+jobs. Every endpoint except `/health`, `/auth/register` and `/auth/login` needs
+`Authorization: Bearer <access_token>`.
+
+| Endpoint | What |
+|---|---|
+| `POST /auth/register` | JSON `{"email", "password"}` (password 8–128 chars) → `201`; `409` if taken |
+| `POST /auth/login` | form fields `username` (the email) + `password` → `access_token`, `idle_timeout_seconds`, `expires_at` |
+| `GET /auth/me` | who am I; also a keep-alive |
+| `POST /auth/logout` | revokes the session immediately (`204`) |
+
+**Session timeout.** A session ends after 30 minutes with no authenticated
+request (`SESSION_IDLE_MINUTES`); every request resets the clock. The token also
+has a hard cap of 12 hours (`SESSION_MAX_HOURS`) however active you are. The
+idle check is server-side, so logout and expiry take effect at once. Clients
+should treat any `401` as "sign in again".
+
+Passwords are stored as salted scrypt hashes. Login errors never say whether the
+email exists, and an account locks for `LOCKOUT_MINUTES` (15) after
+`MAX_FAILED_LOGINS` (5) wrong passwords (`429` + `Retry-After`).
+
+| Env var | Default | |
+|---|---|---|
+| `JWT_SECRET` | — | **required**, ≥ 32 chars; without it auth endpoints return `503` |
+| `SESSION_IDLE_MINUTES` | 30 | inactivity timeout |
+| `SESSION_MAX_HOURS` | 12 | absolute token lifetime |
+| `MAX_FAILED_LOGINS` / `LOCKOUT_MINUTES` | 5 / 15 | per-account lockout |
+| `ALLOW_REGISTRATION` | true | `false` closes sign-up (`403`) |
+| `MAX_CONCURRENT_RUNS` | 3 | server-wide searches at once (`503`) |
+
+If you ran an earlier single-user version, its `data/jobhunt.db` is renamed to
+`jobhunt.pre-auth.bak` on first start and a fresh database is created.
+
+### Endpoints
+
+| Endpoint | What |
+|---|---|
+| `POST /resume` | multipart `file` (.pdf/.txt/.md, ≤ 5 MB) → extracts your profile and keeps the file as a new version. Earlier uploads stay. Identical bytes are not stored twice. A failed extraction stores nothing. At most `MAX_RESUMES_PER_USER` (default 50) per user, then `409` until you delete some. |
+| `GET /resume` | download the newest resume (as an attachment, `404` if none) |
+| `GET /resumes` | list every upload, newest first: `id`, `filename`, `size`, `sha256`, `uploaded_at`, `is_current` |
+| `GET /resumes/{id}`, `DELETE /resumes/{id}` | download or delete one upload (`204`). The profile and jobs stay. |
+| `POST /resume/reextract` | re-run extraction on the newest resume, e.g. after changing model. Overwrites the profile, including manual `PUT /profile` corrections. |
+| `GET /profile`, `PUT /profile` | read the profile (with `resume`: the newest upload's metadata); correct fields (e.g. `{"years_experience": 3.2}`) |
+| `POST /search` | start a run in the background → `202` + `run_id`. Optional body: `{"draft": true, "limit": 50, "companies": ["Acme"]}` |
+| `GET /runs/{run_id}`, `GET /runs/latest` | `status` (running / succeeded / failed), `stage`, `counts`, `error` |
+| `GET /jobs` | scored matches. Filters: `min_score` (default = `score_threshold`; `0` = all), `company`, `q`, `location`, `status`, `limit`, `offset` |
+| `GET /jobs/{job_id}` | full posting plus the drafted application kit |
+| `POST /jobs/{job_id}/applied` | mark applied |
+| `GET /stats`, `GET /health` | counts; liveness |
+| `GET /insights/skills` | which skills the stored postings ask for, as counts and percentages (below) |
+
+```bash
+B=http://127.0.0.1:8000
+curl -X POST $B/auth/register -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"a long passphrase"}'
+TOKEN=$(curl -s -X POST $B/auth/login -d "username=you@example.com" \
+  -d "password=a long passphrase" | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+AUTH="Authorization: Bearer $TOKEN"
+curl -H "$AUTH" -F file=@resume.pdf $B/resume
+curl -H "$AUTH" -X POST $B/search
+curl -H "$AUTH" $B/runs/latest
+curl -H "$AUTH" "$B/jobs?min_score=7"
+```
+
+### Skill insights
+
+`GET /insights/skills` answers "what do the jobs I'm seeing actually ask for?".
+It counts skills across the postings your searches stored, so each figure is
+`postings mentioning it / postings analysed`, with `sample_size` returned beside
+it. There is no LLM and no outside data: a fixed vocabulary of ~90 skills matched
+by regex (`jobhunt/skills.py`), so the same postings always give the same numbers.
+A posting counts a skill once however often it repeats it.
+
+```bash
+curl -H "$AUTH" "$B/insights/skills?role=ai-ml&top=10"
+```
+
+Filters: `role` (`ai-ml`, `backend`, `frontend`, `full-stack`, `mobile`, `data`,
+`devops-sre`, `software-engineer`, `other`, taken from the job title),
+`category`, `min_score` (default `0` = everything stored, not only matches),
+`company`, `q`, `location`, `top`. Each skill carries `in_profile`, and `gaps`
+lists the in-demand skills your profile does not mention. The sample is only as
+broad as your searches and `config.yaml` filters, and it is capped at the newest
+2000 postings (`truncated`); a `note` warns when the sample is small.
+
+Guards, since a run spends LLM tokens: one run at a time (`409`), at most one per
+`MIN_RUN_INTERVAL_MIN` minutes (default 30, `429` with `Retry-After`), and at most
+`MAX_SCREEN_JOBS` new jobs screened per run (default 80). Jobs that were not
+scored are not stored, so the next run retries them.
+
+Data lives in SQLite at `$DB_PATH` (default `data/jobhunt.db`, git-ignored). The
+uploaded resumes are stored in the same database (every version, per user, as BLOBs), so the
+database holds personal data: keep it private and on a persistent volume when hosted.
+The filters, companies and Workday terms still come from `config.yaml` and
+`companies.yaml`. `seen.json` is not used by the API.
+
+---
+
 ## Layout
 
 ```
 jobhunt/
-  fetch.py       Job dataclass, strip_html, 3 pure parsers, fetch_all
+  fetch.py       Job dataclass, strip_html, 3 pure parsers, Workday fetcher, fetch_all
   prefilter.py   title/location/freshness gate — no LLM, no cost
   providers.py   the swappable provider interface + 5 backends
   llm.py         screen() / draft() / build_profile() / keyword stub
+  pipeline.py    fetch -> filter -> screen -> draft as one callable (used by the API)
+  api/           FastAPI app (app.py), SQLite storage (db.py), models (schemas.py)
   digest.py      HTML email (inline CSS only — Gmail strips <style>)
   mailer.py      SMTP
   store.py       seen.json dedupe + tracker + CSV export
@@ -221,7 +340,7 @@ jobhunt/
   cli.py         argparse: profile / run / applied / stats
 config.yaml      filters, thresholds, paths
 companies.yaml   boards to poll
-tests/           55 tests, no network, no key
+tests/           no network, no key
 ```
 
 HTTP is kept out of the parsers on purpose. Each `parse_*(slug, company, body)`

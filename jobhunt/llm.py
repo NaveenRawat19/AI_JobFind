@@ -16,7 +16,7 @@ from datetime import date
 from typing import Any
 
 from .fetch import Job
-from .providers import LLMError, Provider, resolve
+from .providers import LLMError, Provider, UnsupportedDocument, resolve
 
 _FENCE_OPEN = re.compile(r"^\s*```(?:json|JSON)?\s*", re.M)
 _FENCE_CLOSE = re.compile(r"\s*```\s*$", re.M)
@@ -92,6 +92,23 @@ Return ONLY a JSON object, no prose, no markdown fences:
 }"""
 
 
+def pdf_to_text(pdf: bytes) -> str:
+    """Local text extraction, for providers that cannot take a PDF directly."""
+    try:
+        from io import BytesIO
+
+        from pypdf import PdfReader
+        text = "\n".join((p.extract_text() or "") for p in PdfReader(BytesIO(pdf)).pages)
+    except ImportError as e:
+        raise LLMError("reading PDFs with this provider needs `pip install pypdf`") from e
+    except Exception as e:
+        raise LLMError(f"could not read the PDF: {type(e).__name__}") from e
+    if len(text.strip()) < 200:
+        raise LLMError("no text found in the PDF (a scanned image?); upload a .txt/.md "
+                       "resume or use a provider that reads PDFs (gemini, anthropic)")
+    return text
+
+
 def build_profile(resume_bytes: bytes | None = None, resume_text: str | None = None,
                   is_pdf: bool = False, provider: Provider | None = None,
                   model: str | None = None) -> dict:
@@ -106,6 +123,11 @@ def build_profile(resume_bytes: bytes | None = None, resume_text: str | None = N
         try:
             raw = provider.complete_document(
                 model, prompt, resume_bytes, PROFILE_MAX_TOKENS)
+        except UnsupportedDocument:
+            text = pdf_to_text(resume_bytes)
+            raw = provider.complete(
+                model, "", f"{prompt}\n\n--- RESUME ---\n{text}",
+                PROFILE_MAX_TOKENS, json_mode=True)
         except LLMError as e:
             raise LLMError(
                 f"{e}\nTip: export your resume to .txt and re-run, or set "

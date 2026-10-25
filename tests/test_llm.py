@@ -273,7 +273,7 @@ def test_keyword_screen_stays_in_range_with_an_empty_profile():
 
 ENV_KEYS = ["LLM_PROVIDER", "SCREEN_PROVIDER", "DRAFT_PROVIDER",
             "SCREEN_MODEL", "DRAFT_MODEL", "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY", "GROQ_API_KEY"]
+            "GEMINI_API_KEY", "GROQ_API_KEY", "XAI_API_KEY", "LLM_BASE_URL", "XAI_BASE_URL"]
 
 
 @pytest.fixture
@@ -352,3 +352,74 @@ def test_both_stages_ask_for_json_mode_and_leave_room_for_thinking():
 def test_providers_without_document_support_say_so():
     with pytest.raises(providers.UnsupportedDocument):
         providers.GroqProvider().complete_document("m", "prompt", b"%PDF", 100)
+
+
+def test_grok_resolves_under_both_names_with_its_own_key(clean_env):
+    clean_env.setenv("GROQ_API_KEY", "gsk_other")        # a different vendor's key must not satisfy it
+    for name in ("xai", "grok"):
+        clean_env.setenv("LLM_PROVIDER", name)
+        with pytest.raises(LLMError, match="XAI_API_KEY"):
+            providers.resolve("draft")
+    clean_env.setenv("XAI_API_KEY", "xai-test")
+    provider, model = providers.resolve("draft")
+    assert provider.name == "xai" and model == "grok-4.7"
+    assert providers.resolve("screen")[1] == "grok-4.3"
+
+
+def test_grok_posts_to_the_xai_endpoint_with_its_own_key(clean_env, monkeypatch):
+    clean_env.setenv("XAI_API_KEY", "xai-test")
+    clean_env.setenv("LLM_BASE_URL", "https://elsewhere.example/v1")   # meant for another provider
+    seen = {}
+
+    class Resp:
+        status_code = 200
+        text = ""
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}]}
+
+    def fake_post(url, headers, json, timeout):
+        seen.update(url=url, auth=headers["Authorization"], body=json)
+        return Resp()
+
+    monkeypatch.setattr(providers.requests, "post", fake_post)
+    providers.XAIProvider().complete("grok-4.3", "sys", "hi", 100, json_mode=True)
+    assert seen["url"] == "https://api.x.ai/v1/chat/completions"
+    assert seen["auth"] == "Bearer xai-test"
+    assert seen["body"]["model"] == "grok-4.3"
+    assert seen["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_pdf_resume_falls_back_to_local_text_for_providers_that_cannot_read_pdfs(monkeypatch):
+    monkeypatch.setattr(llm, "pdf_to_text", lambda pdf: "Naveen Rawat - Python engineer " * 20)
+    p = StubProvider(['{"name": "Naveen Rawat", "years_experience": 3.2}'])
+    p.complete_document = lambda *a, **k: (_ for _ in ()).throw(providers.UnsupportedDocument("no pdf"))
+    profile = llm.build_profile(resume_bytes=b"%PDF-1.4", is_pdf=True, provider=p, model="m")
+    assert profile["name"] == "Naveen Rawat"
+    assert "Python engineer" in p.calls[0]["user"] and p.calls[0]["json_mode"] is True
+
+
+def test_provider_outage_on_pdf_is_not_mistaken_for_missing_pdf_support(monkeypatch):
+    monkeypatch.setattr(llm, "pdf_to_text", lambda pdf: pytest.fail("must not fall back on a 503"))
+    p = StubProvider([])
+    p.complete_document = lambda *a, **k: (_ for _ in ()).throw(LLMError("gemini HTTP 503"))
+    with pytest.raises(LLMError, match="503"):
+        llm.build_profile(resume_bytes=b"%PDF-1.4", is_pdf=True, provider=p, model="m")
+
+
+def test_pdf_with_no_text_layer_is_rejected_clearly(monkeypatch):
+    import pypdf
+    from io import BytesIO
+    buf = BytesIO()
+    w = pypdf.PdfWriter()
+    w.add_blank_page(100, 100)
+    w.write(buf)
+    with pytest.raises(LLMError, match="no text"):
+        llm.pdf_to_text(buf.getvalue())
+
+
+def test_pdf_to_text_extracts_real_text():
+    from pathlib import Path
+    pdfs = list(Path(__file__).resolve().parent.parent.glob("*.pdf"))
+    if not pdfs:
+        pytest.skip("no sample PDF in the repo (they are git-ignored)")
+    assert len(llm.pdf_to_text(pdfs[0].read_bytes())) > 200

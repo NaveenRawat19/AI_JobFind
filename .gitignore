@@ -11,6 +11,9 @@ out/
 *.html
 !jobhunt/templates/*.html
 
+# API database (profile, runs, jobs)
+data/
+
 # Your dedupe index and application tracker. Personal, and it must never ship
 # with the repo: a cloned seen.json marks every job as already-seen, so a new
 # user's first run finds nothing. GitHub Actions persists it via actions/cache

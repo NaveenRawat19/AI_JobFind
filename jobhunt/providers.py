@@ -187,9 +187,12 @@ class OpenAICompatProvider(Provider):
     default_base = "https://api.groq.com/openai/v1"
     key_env = "GROQ_API_KEY"
 
+    def _base(self) -> str:
+        return os.getenv("LLM_BASE_URL", self.default_base).rstrip("/")
+
     def complete(self, model: str, system: str, user: str, max_tokens: int,
                  json_mode: bool = False) -> str:
-        base = os.getenv("LLM_BASE_URL", self.default_base).rstrip("/")
+        base = self._base()
         messages = ([{"role": "system", "content": system}] if system else []) + \
                    [{"role": "user", "content": user}]
         payload: dict[str, Any] = {"model": model, "messages": messages,
@@ -212,6 +215,19 @@ class OpenAICompatProvider(Provider):
 
 class GroqProvider(OpenAICompatProvider):
     name = "groq"
+
+
+class XAIProvider(OpenAICompatProvider):
+    """Grok (xAI). Its own key and endpoint, so a stray LLM_BASE_URL meant for
+    another provider cannot send the xAI key somewhere else."""
+
+    name = "xai"
+    required_env = "XAI_API_KEY"
+    key_env = "XAI_API_KEY"
+    default_base = "https://api.x.ai/v1"
+
+    def _base(self) -> str:
+        return os.getenv("XAI_BASE_URL", self.default_base).rstrip("/")
 
 
 class OllamaProvider(Provider):
@@ -249,6 +265,8 @@ PROVIDERS = {
     "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
     "groq": GroqProvider,
+    "xai": XAIProvider,
+    "grok": XAIProvider,
     "openai-compatible": OpenAICompatProvider,
     "ollama": OllamaProvider,
 }
@@ -259,6 +277,8 @@ DEFAULT_MODELS = {
     "anthropic": {"screen": "claude-haiku-4-5-20251001", "draft": "claude-sonnet-5"},
     "gemini": {"screen": "gemini-2.0-flash", "draft": "gemini-2.0-flash"},
     "groq": {"screen": "llama-3.3-70b-versatile", "draft": "llama-3.3-70b-versatile"},
+    "xai": {"screen": "grok-4.3", "draft": "grok-4.7"},
+    "grok": {"screen": "grok-4.3", "draft": "grok-4.7"},
     "openai-compatible": {"screen": "gpt-4o-mini", "draft": "gpt-4o"},
     "ollama": {"screen": "llama3.1", "draft": "llama3.1"},
 }

@@ -9,3 +9,14 @@ anthropic>=0.40
 
 # Tests
 pytest>=8.0
+
+# HTTP API (uvicorn jobhunt.api.app:app). httpx is for FastAPI's TestClient.
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+httpx>=0.27
+# JWT auth. Install "PyJWT", NOT the unrelated "jwt" package: both provide
+# `import jwt` and the wrong one overwrites the right one.
+PyJWT>=2.8
+# PDF text extraction for providers that cannot read PDFs (xai/grok, groq, ollama).
+pypdf>=4.0
