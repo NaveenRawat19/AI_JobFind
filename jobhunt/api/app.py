@@ -8,6 +8,7 @@
     GET|DELETE /resumes/{id}   download or delete one of them
     POST /resume/reextract     rebuild the profile from the newest stored resume
     GET/PUT /profile      read or correct the stored profile
+    POST /study-plan      store study plan requirements;  GET /study-plan the latest
     POST /search          start a background run (202); GET /runs/{id} to follow it
     GET /jobs             scored matches, filterable; GET /jobs/{id} for the full kit
     POST /jobs/{id}/applied
@@ -21,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ from pydantic import ValidationError
 
 from .. import llm
 from .. import skills as skills_mod
+from .. import studyplan
 from ..pipeline import PipelineError, run_pipeline
 from ..providers import LLMError, resolve
 from .auth import (AuthNotConfigured, AuthSettings, burn_password_check, create_token,
@@ -42,7 +45,7 @@ from .auth import (AuthNotConfigured, AuthSettings, burn_password_check, create_
 from .db import Database, RunBlocked
 from .schemas import (JobDetail, JobList, MeOut, Profile, ProfileOut, ProfileUpdate,
                       RegisterRequest, ResumeListItem, RunOut, SearchRequest, SkillInsights,
-                      TokenOut, UserOut)
+                      StudyPlanRequirement, StudyPlanOut, TokenOut, UserOut)
 
 log = logging.getLogger("jobhunt.api")
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -91,6 +94,7 @@ def create_app(db_path: str | Path | None = None, config_path: str | Path | None
 
     app = FastAPI(title="jobhunt", version="2.0", lifespan=lifespan)
     app.state.db = db
+    plan_slots = threading.BoundedSemaphore(max(1, _env_int("MAX_CONCURRENT_PLANS", 2)))
 
     def load_cfg() -> dict:
         if not config_file.exists():
@@ -287,6 +291,45 @@ def create_app(db_path: str | Path | None = None, config_path: str | Path | None
             raise HTTPException(404, "no profile yet; POST /resume first")
         merged = {**stored["profile"], **update.model_dump(exclude_unset=True, exclude_none=True)}
         return db.save_profile(user["id"], Profile.model_validate(merged).model_dump(), None)
+
+    # -------------------------------------------------------------- study plan
+    @app.post("/study-plan", response_model=StudyPlanOut, status_code=201, tags=["study plan"])
+    def create_study_plan(body: StudyPlanRequirement, user: dict = Depends(current_user)) -> dict:
+        """Store the requirements and generate the plan with the draft-stage LLM.
+
+        `plan` is plain text in the planner app's import format. Long plans are built
+        in several model calls, so expect this to take a minute or more."""
+        data = body.model_dump()
+        days = studyplan.plan_days(data)
+        max_days = _env_int("MAX_PLAN_DAYS", 120)
+        if days > max_days:
+            raise HTTPException(422, f"a plan can cover at most {max_days} days; this asks for {days}")
+        try:
+            provider, model = resolve("draft")
+        except LLMError as e:
+            raise HTTPException(503, f"plan generation is not configured: {e}")
+        if not plan_slots.acquire(blocking=False):
+            raise HTTPException(503, "too many plans are being generated; try again shortly",
+                                headers={"Retry-After": "30"})
+        try:
+            stored = db.save_study_plan(user["id"], data)
+            try:
+                stored["plan"] = studyplan.generate_plan(data, provider, model)
+            except LLMError as e:
+                raise HTTPException(502, f"plan generation failed ({e}); your requirements "
+                                         f"were saved as study plan {stored['id']}")
+            db.set_study_plan_text(user["id"], stored["id"], stored["plan"])
+            return stored
+        finally:
+            plan_slots.release()
+
+    @app.get("/study-plan", response_model=StudyPlanOut, tags=["study plan"])
+    def get_study_plan(user: dict = Depends(current_user)) -> dict:
+        """The most recently stored requirements and plan."""
+        stored = db.latest_study_plan(user["id"])
+        if not stored:
+            raise HTTPException(404, "no study plan requirements yet; POST /study-plan first")
+        return stored
 
     # ------------------------------------------------------------------ search
     def execute_run(run_id: str, user_id: int, profile: dict, cfg: dict, companies: list[dict],

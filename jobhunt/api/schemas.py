@@ -1,7 +1,7 @@
 """Request/response models."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,6 +105,36 @@ class SkillInsights(BaseModel):
     roles: list[RoleCount] = Field(description="Role families in the filtered sample, before `role` is applied.")
     skills: list[SkillStat]
     gaps: list[str] = Field(description="Top skills in demand that your profile does not list.")
+
+
+class StudyPlanRequirement(BaseModel):
+    """What a user wants from a study plan. Stored as submitted; nothing is generated yet."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    field: str = Field(min_length=1, max_length=100, examples=["tech"])
+    field_name: str | None = Field(None, max_length=100, description="Name of the field when it is not one of the presets.")
+    goal: str = Field(min_length=1, max_length=1000)
+    level: str = Field(min_length=1, max_length=50, examples=["intermediate"])
+    weak_areas: str = Field("", max_length=1000)
+    duration_value: int = Field(ge=1, le=1000)
+    duration_unit: Literal["days", "weeks", "months"]
+    hours_per_day: float = Field(gt=0, le=24)
+    review_days: bool = False
+    tracks: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        min_length=1, max_length=30, description="Subjects to cover; the plan labels every task with one of them.")
+    track_mode: str = Field("all", max_length=50)
+    resources: str = Field("", max_length=5000, description="Free text; one resource per line.")
+    free_only: bool = False
+    task_styles: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field([], max_length=30)
+    extra: str = Field("", max_length=2000)
+
+
+class StudyPlanOut(StudyPlanRequirement):
+    id: int
+    created_at: str
+    plan: str | None = Field(
+        None, description="The plan as plain text in the planner app's import format; "
+                          "null if generation failed (the requirements are still stored).")
 
 
 class SearchRequest(BaseModel):

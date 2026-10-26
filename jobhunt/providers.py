@@ -14,11 +14,43 @@ from __future__ import annotations
 
 import base64
 import os
+import re
+import time
 from typing import Any
 
 import requests
 
 TIMEOUT = 120
+RATE_LIMIT_RETRIES = 6
+MAX_RATE_LIMIT_WAIT = 90  # seconds; a longer wait means a daily quota, not a per-minute one
+
+_RETRY_IN = re.compile(
+    r"try again in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?(?:([\d.]+)ms)?", re.I)
+
+
+def _retry_wait(r: requests.Response) -> float | None:
+    """Seconds to wait before retrying a 429, or None if waiting is pointless."""
+    wait: float | None = None
+    try:
+        wait = float(r.headers.get("retry-after", ""))
+    except ValueError:
+        m = _RETRY_IN.search(r.text or "")
+        if m and any(m.groups()):
+            hours, mins, secs, millis = (float(g) if g else 0.0 for g in m.groups())
+            wait = hours * 3600 + mins * 60 + secs + millis / 1000
+    if wait is None:
+        wait = 5.0
+    return None if wait > MAX_RATE_LIMIT_WAIT else max(wait, 1.0) + 0.5
+
+
+def _with_rate_limit_retry(call) -> requests.Response:
+    """Per-minute token limits (Groq's free tier is 8000 TPM) clear within seconds, so wait and retry."""
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        r = call()
+        wait = _retry_wait(r) if r.status_code == 429 else None
+        if wait is None or attempt == RATE_LIMIT_RETRIES:
+            return r
+        time.sleep(wait)
 
 
 class LLMError(RuntimeError):
@@ -199,12 +231,12 @@ class OpenAICompatProvider(Provider):
                                    "max_tokens": max_tokens, "temperature": 0.2}
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
-        r = requests.post(
+        r = _with_rate_limit_retry(lambda: requests.post(
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {self._env(self.key_env)}"},
             json=payload,
             timeout=TIMEOUT,
-        )
+        ))
         if r.status_code != 200:
             raise LLMError(f"{self.name} HTTP {r.status_code}: {r.text[:300]}")
         try:

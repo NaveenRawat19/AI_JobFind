@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS resumes (
     uploaded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes (user_id, id DESC);
+CREATE TABLE IF NOT EXISTS study_plans (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    data       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    plan       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_study_plans_user ON study_plans (user_id, id DESC);
 CREATE TABLE IF NOT EXISTS runs (
     id          TEXT PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -125,6 +133,8 @@ class Database:
             c.execute("PRAGMA journal_mode=WAL")
             self._set_aside_single_resume_table(c)
             c.executescript(SCHEMA)
+            if "plan" not in {r["name"] for r in c.execute("PRAGMA table_info(study_plans)")}:
+                c.execute("ALTER TABLE study_plans ADD COLUMN plan TEXT")
             self._restore_single_resume_rows(c)
             # A restart kills the worker thread; its run would otherwise stay
             # "running" forever and block every future search.
@@ -277,6 +287,28 @@ class Database:
             return None
         return {"profile": json.loads(row["data"]), "source_file": row["source_file"],
                 "updated_at": row["updated_at"], "resume": self.resume_info(user_id)}
+
+    # ------------------------------------------------------------- study plans
+    def save_study_plan(self, user_id: int, data: dict) -> dict:
+        created = _now()
+        with self.connect() as c:
+            cur = c.execute("INSERT INTO study_plans (user_id, data, created_at) VALUES (?, ?, ?)",
+                            (user_id, json.dumps(data, ensure_ascii=False), created))
+        return {**data, "id": cur.lastrowid, "created_at": created, "plan": None}
+
+    def set_study_plan_text(self, user_id: int, plan_id: int, plan: str) -> None:
+        with self.connect() as c:
+            c.execute("UPDATE study_plans SET plan = ? WHERE id = ? AND user_id = ?",
+                      (plan, plan_id, user_id))
+
+    def latest_study_plan(self, user_id: int) -> dict | None:
+        with self.connect() as c:
+            row = c.execute("SELECT * FROM study_plans WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                            (user_id,)).fetchone()
+        if not row:
+            return None
+        return {**json.loads(row["data"]), "id": row["id"], "created_at": row["created_at"],
+                "plan": row["plan"]}
 
     # ----------------------------------------------------------------- resume
     _INFO_COLS = "id, filename, media_type, size, sha256, uploaded_at"
