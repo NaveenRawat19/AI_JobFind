@@ -92,12 +92,21 @@ def create_app(db_path: str | Path | None = None, config_path: str | Path | None
             log.warning("%s: sign-in is disabled (503) until it is", e)
         yield
 
+    app = FastAPI(title="jobhunt", version="2.0", lifespan=lifespan)
+
     origins = [
         "http://localhost:5173",
-        "https://naveenrawat19.github.io/MyPlanner/",
+        "https://naveenrawat19.github.io",
     ]
 
-    app = FastAPI(title="jobhunt", version="2.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.state.db = db
     plan_slots = threading.BoundedSemaphore(max(1, _env_int("MAX_CONCURRENT_PLANS", 2)))
 
