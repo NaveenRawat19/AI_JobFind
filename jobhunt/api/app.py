@@ -81,7 +81,12 @@ def _attachment(filename: str) -> str:
 
 
 def create_app(db_path: str | Path | None = None, config_path: str | Path | None = None) -> FastAPI:
-    db = Database(db_path or os.getenv("DB_PATH", ROOT / "data" / "jobhunt.db"))
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+
+    db = Database(database_url)
     config_file = Path(config_path or os.getenv("JOBHUNT_CONFIG", ROOT / "config.yaml"))
 
     @asynccontextmanager
