@@ -92,6 +92,11 @@ def create_app(db_path: str | Path | None = None, config_path: str | Path | None
             log.warning("%s: sign-in is disabled (503) until it is", e)
         yield
 
+    origins = [
+        "http://localhost:5173",
+        "https://naveenrawat19.github.io/MyPlanner/",
+    ]
+
     app = FastAPI(title="jobhunt", version="2.0", lifespan=lifespan)
     app.state.db = db
     plan_slots = threading.BoundedSemaphore(max(1, _env_int("MAX_CONCURRENT_PLANS", 2)))
