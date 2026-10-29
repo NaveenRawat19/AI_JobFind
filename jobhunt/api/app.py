@@ -46,6 +46,7 @@ from .db import Database, RunBlocked
 from .schemas import (JobDetail, JobList, MeOut, Profile, ProfileOut, ProfileUpdate,
                       RegisterRequest, ResumeListItem, RunOut, SearchRequest, SkillInsights,
                       StudyPlanRequirement, StudyPlanOut, TokenOut, UserOut)
+from fastapi.middleware.cors import CORSMiddleware
 
 log = logging.getLogger("jobhunt.api")
 ROOT = Path(__file__).resolve().parent.parent.parent
